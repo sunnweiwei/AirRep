@@ -13,6 +13,10 @@ demonstrate that AirRep achieves performance on par with state-of-the-art gradie
 Further analysis highlights its robustness 
 and generalization across tasks and models.
 
+Paper: [https://arxiv.org/pdf/2505.18513](https://arxiv.org/pdf/2505.18513)
+
+Note: This is a code draft; a more formal version will be released later.
+
 # Model Inference
 
 ```
