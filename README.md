@@ -42,3 +42,17 @@ LDS Evaluation: `python lds_eval.py`
 
 Data Selection Evaluation: `python data_selection.py`
 
+# Cite
+
+```
+@misc{sun2025enhancing,
+  title        = {Enhancing Training Data Attribution with Representational Optimization},
+  author       = {Weiwei Sun and Haokun Liu and Nikhil Kandpal and Colin Raffel and Yiming Yang},
+  year         = {2025},
+  eprint       = {2505.18513},
+  archivePrefix= {arXiv},
+  url          = {https://arxiv.org/abs/2505.18513},
+  doi          = {10.48550/arXiv.2505.18513}
+}
+```
+
