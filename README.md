@@ -13,6 +13,8 @@ demonstrate that AirRep achieves performance on par with state-of-the-art gradie
 Further analysis highlights its robustness 
 and generalization across tasks and models.
 
+![main_compare](https://github.com/user-attachments/assets/62c4d421-fc9d-4484-b62a-3184481a983a)
+
 Paper: [https://arxiv.org/pdf/2505.18513](https://arxiv.org/pdf/2505.18513)
 
 Note: This is a code draft; a more formal version will be released later.
