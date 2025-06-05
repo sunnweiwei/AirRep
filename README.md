@@ -1,52 +1,62 @@
-# AirRep: Enhancing Training Data Attribution with Representational Optimization
+# AirRep
 
+AirRep provides attribution-friendly text embeddings trained for efficient training data analysis. The project accompanies our paper **"Enhancing Training Data Attribution with Representational Optimization"** ([arXiv:2505.18513](https://arxiv.org/pdf/2505.18513)).
 
-Training data attribution (TDA) methods aim to measure how training data impacts a model's predictions. 
-While gradient-based attribution methods, such as influence functions, offer theoretical grounding, their computational costs make them impractical for large-scale applications. 
-Representation-based approaches are far more scalable, but typically rely on heuristic embeddings that are not optimized for attribution, limiting their fidelity.
-To address these challenges, we propose AirRep, 
-a scalable, representation-based approach that closes this gap by learning task-specific and model-aligned representations optimized explicitly for TDA.
-AirRep introduces two key innovations: a trainable encoder tuned for attribution quality, and an attention-based pooling mechanism that enables accurate estimation of group-wise influence.
-We train AirRep using a ranking objective over automatically constructed training subsets labeled by their empirical effect on target predictions.
-Experiments on instruction-tuned LLMs
-demonstrate that AirRep achieves performance on par with state-of-the-art gradient-based approaches while being nearly two orders of magnitude more efficient at inference time.
-Further analysis highlights its robustness 
-and generalization across tasks and models.
+## Installation
 
-![main_compare](https://github.com/user-attachments/assets/62c4d421-fc9d-4484-b62a-3184481a983a)
-
-Paper: [https://arxiv.org/pdf/2505.18513](https://arxiv.org/pdf/2505.18513)
-
-Note: This is a code draft; a more formal version will be released later.
-
-# Model Inference
-
+```bash
+pip install -e .
 ```
+
+The package depends on [SentenceTransformers](https://github.com/UKPLab/sentence-transformers).
+
+## Usage
+
+```python
 from airrep import AirRep
 
-data = [
-  "xxxx",
-  "yyy"
+texts = [
+    "What is the capital of France?",
+    "How tall is Mount Everest?",
 ]
 
-model = AirRep('xxx/airrep-small-flan')
-embeddings = model.encode(data)
+model = AirRep()  # loads a small GTE based encoder by default
+embeddings = model.encode(texts)
 ```
 
-# Model Training
+The `AirRep` class is a lightweight wrapper over `SentenceTransformer` and can be initialized with any compatible model name.
 
+## Training
 
-Data Generation: `python data_generation.py`
+Generate training pairs and fit a regression head predicting language-model loss:
 
-Model Training: `python train.py`
-
-LDS Evaluation: `python lds_eval.py`
-
-Data Selection Evaluation: `python data_selection.py`
-
-# Cite
-
+```bash
+python scripts/train_airrep.py data.txt out_dir --samples 200 --subset_size 3
 ```
+
+This creates `out_dir/pairs.json` and a trained model `out_dir/airrep.pt`.
+
+## Evaluation
+
+Evaluate LDS correlation on held-out pairs:
+
+```bash
+python scripts/evaluate_lds.py out_dir/airrep.pt test_pairs.json
+```
+
+## Inference
+
+Compute influence scores for new data:
+
+```bash
+python scripts/inference.py out_dir/airrep.pt train.txt test.txt
+```
+
+## Citation
+
+Please cite our work if you find this project useful:
+
+```bibtex
 @misc{sun2025enhancing,
   title        = {Enhancing Training Data Attribution with Representational Optimization},
   author       = {Weiwei Sun and Haokun Liu and Nikhil Kandpal and Colin Raffel and Yiming Yang},
@@ -57,4 +67,3 @@ Data Selection Evaluation: `python data_selection.py`
   doi          = {10.48550/arXiv.2505.18513}
 }
 ```
-
