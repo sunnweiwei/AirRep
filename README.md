@@ -8,8 +8,6 @@ AirRep provides attribution-friendly text embeddings trained for efficient train
 pip install -e .
 ```
 
-The package depends on [SentenceTransformers](https://github.com/UKPLab/sentence-transformers).
-
 ## Usage
 
 ```python
