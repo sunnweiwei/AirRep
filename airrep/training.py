@@ -35,6 +35,25 @@ class AirRepModel:
         with torch.no_grad():
             return float(self.regressor(emb).item())
 
+    def state_dict(self) -> dict:
+        """Return state dictionary for saving."""
+        return {"regressor": self.regressor.state_dict()}
+
+    def save(self, path: str) -> None:
+        """Save only the regression head parameters."""
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def load(cls, path: str, encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5") -> "AirRepModel":
+        """Load AirRepModel from file."""
+        state = torch.load(path, map_location="cpu")
+        encoder = AirRep(encoder_name)
+        dim = state["regressor"]["weight"].shape[1]
+        regressor = nn.Linear(dim, 1)
+        regressor.load_state_dict(state["regressor"])
+        return cls(encoder, regressor)
+
 
 class _SubsetDataset(Dataset):
     def __init__(self, pairs: List[SubsetLoss], encoder: AirRep) -> None:
