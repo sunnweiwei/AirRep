@@ -1,17 +1,15 @@
 import argparse
-import torch
-from airrep import AirRep, encode_texts, influence_scores
+from airrep import AirRepModel, encode_texts, influence_scores
 
 
 def main():
     parser = argparse.ArgumentParser(description="Encode texts and compute influence")
-    parser.add_argument("model", help="Path to AirRep model state")
+    parser.add_argument("model", help="Path to AirRep regression head file")
     parser.add_argument("train", help="Path to training text file")
     parser.add_argument("test", help="Path to test text file")
     args = parser.parse_args()
 
-    model = AirRep()
-    model.model.load_state_dict(torch.load(args.model))
+    model = AirRepModel.load(args.model)
 
     with open(args.train) as f:
         train_texts = [l.strip() for l in f if l.strip()]

@@ -4,7 +4,7 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
 import torch
 from torch import nn
@@ -19,6 +19,40 @@ class SubsetLoss:
     subset: List[str]
     loss: float
 
+
+@dataclass
+class AirRepModel:
+    """Trained AirRep model with regression head."""
+
+    encoder: AirRep
+    regressor: nn.Module
+
+    def encode(self, texts: Iterable[str]) -> List[List[float]]:
+        return self.encoder.encode(texts)
+
+    def predict_loss(self, subset: Iterable[str]) -> float:
+        emb = torch.tensor(self.encoder.encode(subset)).mean(0)
+        with torch.no_grad():
+            return float(self.regressor(emb).item())
+
+    def state_dict(self) -> dict:
+        """Return state dictionary for saving."""
+        return {"regressor": self.regressor.state_dict()}
+
+    def save(self, path: str) -> None:
+        """Save only the regression head parameters."""
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def load(cls, path: str, encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5") -> "AirRepModel":
+        """Load AirRepModel from file."""
+        state = torch.load(path, map_location="cpu")
+        encoder = AirRep(encoder_name)
+        dim = state["regressor"]["weight"].shape[1]
+        regressor = nn.Linear(dim, 1)
+        regressor.load_state_dict(state["regressor"])
+        return cls(encoder, regressor)
 
 class _SubsetDataset(Dataset):
     def __init__(self, pairs: List[SubsetLoss], encoder: AirRep) -> None:
@@ -51,7 +85,7 @@ def generate_pairs(dataset: Iterable[str], model_name: str = "gpt2", subset_size
     return pairs
 
 
-def train_model(pairs: List[SubsetLoss], encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5", epochs: int = 5, lr: float = 1e-3) -> nn.Module:
+def train_model(pairs: List[SubsetLoss], encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5", epochs: int = 5, lr: float = 1e-3) -> AirRepModel:
     """Train a simple regression head on top of AirRep embeddings."""
     encoder = AirRep(encoder_name)
     dataset = _SubsetDataset(pairs, encoder)
@@ -69,7 +103,7 @@ def train_model(pairs: List[SubsetLoss], encoder_name: str = "Alibaba-NLP/gte-sm
             loss.backward()
             optim.step()
 
-    return nn.Sequential(encoder.model, regressor)
+    return AirRepModel(encoder, regressor)
 
 
 def save_pairs(pairs: List[SubsetLoss], path: str) -> None:
@@ -83,3 +117,23 @@ def load_pairs(path: str) -> List[SubsetLoss]:
     with open(path) as f:
         data = json.load(f)
     return [SubsetLoss(**d) for d in data]
+<<<<<<< HEAD
+=======
+
+
+class AirRepTrainer:
+    """Convenient API for generating data and training AirRep."""
+
+    @staticmethod
+    def generate_data(dataset: Iterable[str], subset_size: int = 5, samples: int = 100, lm_name: str = "gpt2") -> List[SubsetLoss]:
+        return generate_pairs(dataset, model_name=lm_name, subset_size=subset_size, samples=samples)
+
+    @staticmethod
+    def train_model(pairs: List[SubsetLoss], encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5", epochs: int = 5, lr: float = 1e-3) -> AirRepModel:
+        return train_model(pairs, encoder_name=encoder_name, epochs=epochs, lr=lr)
+
+    @classmethod
+    def fit(cls, dataset: Iterable[str], subset_size: int = 5, samples: int = 100, lm_name: str = "gpt2", encoder_name: str = "Alibaba-NLP/gte-small-en-v1.5", epochs: int = 5, lr: float = 1e-3) -> Tuple[AirRepModel, List[SubsetLoss]]:
+        pairs = cls.generate_data(dataset, subset_size=subset_size, samples=samples, lm_name=lm_name)
+        model = cls.train_model(pairs, encoder_name=encoder_name, epochs=epochs, lr=lr)
+        return model, pairs

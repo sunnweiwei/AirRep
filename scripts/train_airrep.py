@@ -1,9 +1,7 @@
 import argparse
-import json
 from pathlib import Path
-import torch
 
-from airrep import generate_pairs, train_model, save_pairs
+from airrep import AirRepTrainer, save_pairs
 
 
 def main():
@@ -17,11 +15,12 @@ def main():
     with open(args.data) as f:
         dataset = [line.strip() for line in f if line.strip()]
 
-    pairs = generate_pairs(dataset, subset_size=args.subset_size, samples=args.samples)
-    save_pairs(pairs, Path(args.output)/"pairs.json")
-    model = train_model(pairs)
+    model, pairs = AirRepTrainer.fit(
+        dataset, subset_size=args.subset_size, samples=args.samples
+    )
     Path(args.output).mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), Path(args.output)/"airrep.pt")
+    save_pairs(pairs, Path(args.output) / "pairs.json")
+    model.save(Path(args.output) / "airrep.pt")
 
 
 if __name__ == "__main__":
