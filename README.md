@@ -6,6 +6,8 @@ It introduces two key innovations: a trainable encoder optimized for attribution
 Paper: Enhancing Training Data Attribution with Representational Optimization ([arXiv:2505.18513](https://arxiv.org/pdf/2505.18513)).  
 Author: Weiwei Sun, Haokun Liu, Nikhil Kandpal, Colin Raffel, Yiming Yang
 
+<img width="5967" height="2403" alt="main_compare (2)" src="https://github.com/user-attachments/assets/0853badf-4594-4a03-a5ed-e6361e7f989d" />
+
 ## Quick Start
 
 Use the FLAN-trained model ([https://huggingface.co/sunweiwei/AirRep-Flan-Small](https://huggingface.co/sunweiwei/AirRep-Flan-Small)) to encode training and test data and compute similarity scores.
@@ -110,15 +112,8 @@ accelerate launch --num_processes 8 scripts/03_train_airrep.py \
 Evaluate a trained model or the released model on the public evaluation set.
 
 ```bash
-# Evaluate your trained model
 python scripts/04_evaluate.py \
   --model_path models/airrep-flan \
-  --dataset sunweiwei/airrep-test \
-  --benchmark flan
-
-# Or evaluate the released model
-python scripts/04_evaluate.py \
-  --model_path sunweiwei/AirRep-Flan-Small \
   --dataset sunweiwei/airrep-test \
   --benchmark flan
 ```
