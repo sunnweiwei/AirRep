@@ -14,41 +14,36 @@ from tqdm import tqdm
 
 
 def softmax(a):
-    """Apply softmax aggregation to scores."""
+    """Softmax-weighted sum aggregation."""
     a = torch.tensor(a)
     attn = a.softmax(dim=-1)
-    a = attn * a
+    return (attn * a).sum().item()
+
+
+def sum_agg(a):
+    """Simple sum aggregation."""
+    a = torch.tensor(a)
     return a.sum().item()
 
 
 def format_item(x):
-    """Format dataset item into text (matches train_old.py logic)."""
     prompt = ''
     response = ''
-
-    # Step 1: Check for 'data' field
     if 'data' in x:
         prompt = x['data'][0]
         prompt = " ".join(prompt.split()[:100])
         response = x['data'][1]
-
-    # Step 2: Check for 'input' field (overwrites step 1)
     if 'input' in x:
         prompt = x.get('instruction', '') + ' ' + x['input']
-
-    # Step 3: Check these fields in order (overwrites step 2)
     for op in ['inputs', 'prompt', 'instruction']:
         if op in x:
             prompt = x[op]
             break
-
-    # Step 4: Check response fields
     for op in ['response', 'targets', 'output']:
         if op in x:
             response = x[op]
             break
 
-    # Step 5: Format with prefix
     prompt = 'Question: ' + " ".join(prompt.split()[:256]) + '\nAnswer:'
     return prompt + ' ' + response
 
@@ -56,6 +51,7 @@ def format_item(x):
 def average_lds_spearman(
     score: np.ndarray,
     lds: List[Dict],
+    use_softmax: bool = True,
 ) -> float:
     """
     Compute average LDS Spearman correlation.
@@ -72,10 +68,12 @@ def average_lds_spearman(
     labels = np.column_stack([np.asarray(s["test_loss"], dtype=float) for s in lds])
     labels = -labels  # Negate labels
 
-    # Use softmax aggregation
+    # Aggregate per subset with chosen method
+    agg_fn = softmax if use_softmax else sum_agg
+    desc = "Computing LDS (softmax)" if use_softmax else "Computing LDS (sum)"
     model_sums = np.column_stack([
-        [softmax(score[i, idx]) for i in range(score.shape[0])]
-        for idx in tqdm(subset_indices, desc="Computing LDS")
+        [agg_fn(score[i, idx]) for i in range(score.shape[0])]
+        for idx in tqdm(subset_indices, desc=desc)
     ])
 
     spearman_vals = []
@@ -97,8 +95,9 @@ def main():
                         help='Benchmark name (flan, alpaca, etc.)')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size for encoding')
-    parser.add_argument('--output_dir', type=str, default='.',
-                        help='Directory to save embeddings cache')
+    # Aggregation choice controlled by a single arg: 1 (softmax) or 0 (sum)
+    parser.add_argument('--softmax', type=int, choices=[0, 1], default=1,
+                        help='1 to use softmax-weighted aggregation, 0 to use sum')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -136,14 +135,6 @@ def main():
     print(f"\nTrain embeddings: {train_emb.shape}")
     print(f"Test embeddings: {test_emb.shape}")
 
-    # Save embeddings
-    os.makedirs(args.output_dir, exist_ok=True)
-    train_path = os.path.join(args.output_dir, f'{args.benchmark}_train_emb.npy')
-    test_path = os.path.join(args.output_dir, f'{args.benchmark}_test_emb.npy')
-    np.save(train_path, train_emb)
-    np.save(test_path, test_emb)
-    print(f"\nSaved embeddings to {args.output_dir}")
-
     # Compute similarity in chunks
     print("\nComputing similarity scores...")
     score = []
@@ -152,8 +143,9 @@ def main():
     score = np.hstack(score)
 
     # Evaluate LDS
-    print("\nEvaluating LDS Spearman correlation...")
-    spearman = average_lds_spearman(score, list(lds_ds))
+    agg_name = 'softmax' if args.softmax == 1 else 'sum'
+    print(f"\nEvaluating LDS Spearman correlation (agg={agg_name})...")
+    spearman = average_lds_spearman(score, list(lds_ds), use_softmax=bool(args.softmax))
 
     print("\n" + "=" * 60)
     print(f"Results for {args.benchmark}")
@@ -161,20 +153,6 @@ def main():
     print(f"LDS Spearman Correlation: {spearman:.4f}")
     print("=" * 60)
 
-    # Save results
-    results = {
-        'benchmark': args.benchmark,
-        'model_path': args.model_path,
-        'spearman': spearman,
-        'train_size': len(train_ds),
-        'test_size': len(test_ds),
-    }
-
-    import json
-    results_path = os.path.join(args.output_dir, f'{args.benchmark}_results.json')
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults saved to {results_path}")
 
 
 if __name__ == '__main__':

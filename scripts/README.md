@@ -199,9 +199,3 @@ python 04_evaluate.py \
     --output_dir ./eval_results
 ```
 
-## Notes
-
-- Stage 1 is fast (~minutes) and runs on CPU
-- Stage 2 is the most time-consuming. Use multi-GPU parallel processing to speed up
-- Stage 3 requires ~8 GPUs for efficient training with batch size 1
-- Total training time depends on data size and hardware, typically several hours to days
