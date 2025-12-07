@@ -249,7 +249,7 @@ class AirRep:
 
         if softmax:
             # Apply softmax attention and weighted sum for each query
-            attn = torch.softmax(scores, dim=-1)
+            attn = torch.softmax(scores.abs(), dim=-1)
             weighted_scores = (attn * scores).sum(dim=-1)
         else:
             # Simple sum
