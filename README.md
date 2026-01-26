@@ -1,10 +1,14 @@
 # AirRep
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![arXiv](https://img.shields.io/badge/arXiv-2505.18513-b31b1b.svg)](https://arxiv.org/abs/2505.18513)
+[![Model](https://img.shields.io/badge/🤗%20Model-AirRep--Flan--Small-blue)](https://huggingface.co/sunweiwei/AirRep-Flan-Small)
+
 AirRep is a scalable, representation-based data attribution model.
 It introduces two key innovations: a trainable encoder optimized for attribution quality, and an attention-based pooling mechanism that enables accurate estimation of group-wise influence.
 
-Paper: Enhancing Training Data Attribution with Representational Optimization ([arXiv:2505.18513](https://arxiv.org/pdf/2505.18513)).  
-Author: Weiwei Sun, Haokun Liu, Nikhil Kandpal, Colin Raffel, Yiming Yang
+**Paper:** Enhancing Training Data Attribution with Representational Optimization ([arXiv:2505.18513](https://arxiv.org/pdf/2505.18513)).  
+**Author:** Weiwei Sun, Haokun Liu, Nikhil Kandpal, Colin Raffel, Yiming Yang
 
 <img width="5967" height="2403" alt="main_compare (2)" src="https://github.com/user-attachments/assets/0853badf-4594-4a03-a5ed-e6361e7f989d" />
 
@@ -116,6 +120,21 @@ python scripts/04_evaluate.py \
   --model_path models/airrep-flan \
   --dataset sunweiwei/airrep-test \
   --benchmark flan
+```
+
+## FastIF (LoGra)
+
+`fast_if` is an efficient reimplementation of [Logix](https://github.com/logix-project/logix). It is 1.5×–2× faster while achieving the same performance:
+```python
+from fast_if import LogRA
+
+model = LogRA.from_pretrained("Qwen/Qwen2.5-0.5B", rank=8)
+
+train_data = [{"input": "What is 2+2?", "output": "4"}, ...]
+train_embeds = model.encode(train_data, batch_size=16, is_test=False)
+test_data = [{"input": "What is 3+3?", "output": "6"}, ...]
+test_embeds = model.encode(test_data, batch_size=16, is_test=True)
+scores = model.similarity(test_embeds, train_embeds, mode='cosine')
 ```
 
 ## Citation
