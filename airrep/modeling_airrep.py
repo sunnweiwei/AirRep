@@ -71,18 +71,19 @@ class AirRepModel(PreTrainedModel):
             Pooled and projected embeddings (batch_size, hidden_size)
         """
         # Get BERT outputs
+        # Create attention mask if not provided (mask padding tokens)
+        if attention_mask is None:
+            attention_mask = input_ids.ne(0)
+
         outputs = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
             output_hidden_states=True,
             return_dict=True,
         )
 
         # Mean pooling
         last_hidden_state = outputs.last_hidden_state
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids)
         pooled = mean_pooling(last_hidden_state, attention_mask)
 
         # Project

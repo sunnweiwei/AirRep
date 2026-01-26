@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
 from accelerate import Accelerator
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
@@ -10,7 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.optim import AdamW
 from transformers.optimization import get_constant_schedule_with_warmup
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Optional
 import numpy as np
 from scipy import stats
 from itertools import product
@@ -235,6 +236,92 @@ def eval_lds(scores, labels):
     return sum(lds) / len(lds)
 
 
+def _gather_tensor(t, local_rank):
+    """Gather tensor from all processes."""
+    all_tensors = [torch.empty_like(t) for _ in range(dist.get_world_size())]
+    dist.all_gather(all_tensors, t)
+    all_tensors[local_rank] = t
+    return all_tensors
+
+
+def gather_tensors(t, local_rank=None):
+    """Gather and concatenate tensors from all processes."""
+    if not dist.is_initialized():
+        return t
+    if local_rank is None:
+        local_rank = dist.get_rank()
+    return torch.cat(_gather_tensor(t, local_rank))
+
+
+def broadcast_batch(batch, src=0):
+    """Broadcast batch from src rank to all ranks."""
+    rank = dist.get_rank()
+    if rank == src:
+        meta = [(k, tuple(v.shape), str(v.dtype)) for k, v in batch.items()]
+    else:
+        meta = None
+    meta_list = [meta]
+    dist.broadcast_object_list(meta_list, src=src)
+    meta = meta_list[0]
+    new_batch = {}
+    for (k, shape, dtype_str) in meta:
+        dtype = getattr(torch, dtype_str.replace('torch.', ''))
+        if rank == src:
+            t = batch[k]
+        else:
+            t = torch.empty(shape, dtype=dtype, device='cuda')
+        dist.broadcast(t, src=src)
+        new_batch[k] = t
+    return new_batch
+
+
+def get_iter(data_loader):
+    """Get synchronized iterator for distributed training."""
+    rank = dist.get_rank()
+    if rank == 0:
+        total_steps = len(data_loader)
+    else:
+        total_steps = None
+    total_steps_list = [total_steps]
+    dist.broadcast_object_list(total_steps_list, src=0)
+    total_steps = total_steps_list[0]
+    bar = tqdm(range(total_steps), total=total_steps, disable=rank != 0)
+    if rank == 0:
+        data_iter = iter(data_loader)
+    else:
+        data_iter = iter(range(total_steps))
+    return bar, data_iter
+
+
+def split_data(data, process_idx, num_processes):
+    """Split data across processes."""
+    if isinstance(data, torch.Tensor):
+        sublist_length, remainder = divmod(data.size(0), num_processes)
+        return data[process_idx * sublist_length + min(process_idx, remainder):(process_idx + 1) * sublist_length + min(
+            process_idx + 1, remainder)]
+    else:
+        return data
+
+
+def eval_lds_and_log(scores_cpu, base_scores_cpu, targets_cpu, run,
+                     loss_val, base_loss_eval, avg_loss_val, acc_val):
+    """Evaluate LDS and log metrics to wandb."""
+    lds_val = eval_lds(scores_cpu, targets_cpu)
+    if base_scores_cpu is not None:
+        base_lds_val = eval_lds(base_scores_cpu, targets_cpu)
+    else:
+        base_lds_val = 0
+    run.log({
+        'loss': loss_val,
+        'base_loss': base_loss_eval,
+        'loss_diff': loss_val - base_loss_eval,
+        'acc': acc_val,
+        'lds': lds_val,
+        'base_lds': base_lds_val,
+        'lds_diff': lds_val - base_lds_val
+    })
+
+
 class AirRepTrainer:
     """Trainer for AirRep model."""
 
@@ -247,6 +334,8 @@ class AirRepTrainer:
         topk: int = 32,
         reference_size: int = 1000,
         save_path: str = "./airrep_model",
+        use_wandb: bool = False,
+        wandb_project: str = "airrep_training",
     ):
         """
         Initialize trainer.
@@ -259,6 +348,8 @@ class AirRepTrainer:
             topk: Number of top subsets to use
             reference_size: Number of dev examples to use
             save_path: Path to save model checkpoints
+            use_wandb: Whether to use W&B for logging
+            wandb_project: W&B project name
         """
         self.base_model = base_model
         self.batch_size = batch_size
@@ -267,6 +358,8 @@ class AirRepTrainer:
         self.topk = topk
         self.reference_size = reference_size
         self.save_path = save_path
+        self.use_wandb = use_wandb
+        self.wandb_project = wandb_project
 
         self.accelerator = Accelerator(gradient_accumulation_steps=1)
 
@@ -303,6 +396,7 @@ class AirRepTrainer:
         # Initialize AirRep model
         model = AirRepModel(config)
         model.bert = base_encoder  # Use pretrained encoder
+        model.bert.is_causal = False  # Disable causal masking
 
         # Create dataset
         rank = self.accelerator.process_index
@@ -330,67 +424,126 @@ class AirRepTrainer:
         model, optimizer = self.accelerator.prepare(model, optimizer)
         scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=10)
 
+        # Initialize W&B and executor for async logging (rank 0 only)
+        if self.accelerator.is_main_process and self.use_wandb:
+            try:
+                import wandb
+                from concurrent.futures import ThreadPoolExecutor
+                run = wandb.init(project=self.wandb_project)
+                run.config.update({
+                    'lr': self.lr,
+                    'topk': self.topk,
+                    'reference_size': self.reference_size,
+                    'save_path': self.save_path,
+                    'base_model': self.base_model,
+                    'batch_size': self.batch_size,
+                    'epochs': self.epochs
+                })
+                executor = ThreadPoolExecutor(max_workers=1)
+            except ImportError:
+                self.accelerator.print("Warning: wandb not installed, skipping W&B logging")
+                self.use_wandb = False
+
         # Training loop
+        losses = []
         for epoch in range(self.epochs):
-            self.accelerator.print(f'Training epoch {epoch + 1}/{self.epochs}')
+            self.accelerator.print(f'Training {epoch + 1}/{self.epochs}')
+            self.accelerator.wait_for_everyone()
             model.eval()  # Keep in eval mode (no dropout)
 
-            if rank == 0:
-                losses = []
-                for batch in tqdm(data_loader):
+            bar, data_iter = get_iter(data_loader)
+            for it in bar:
+                # Rank 0 loads batch, others wait
+                if dist.get_rank() == 0:
+                    batch = next(data_iter)
                     batch = {k: v.cuda() for k, v in batch.items()}
+                else:
+                    batch = {}
 
-                    # Encode dev set
-                    dev_embed = model(batch['dev_input'])
+                # Broadcast batch to all ranks
+                self.accelerator.wait_for_everyone()
+                batch = broadcast_batch(batch, src=0)
 
-                    # Encode subsets and compute scores
+                with self.accelerator.accumulate(model):
+                    rank, tp = self.accelerator.process_index, self.accelerator.num_processes
+
+                    # Split dev_input across GPUs and encode
+                    dev_input = split_data(batch['dev_input'], rank, tp)
+                    dev_embed = gather_tensors(model(input_ids=dev_input))  # Gather from all GPUs
+
+                    targets = batch['targets'].float()
                     scores_batch = []
+
+                    # First pass: encode all subsets without gradients
                     for i in range(self.topk + 10):
                         if f"set_input_{i}" not in batch:
                             break
 
+                        set_input = split_data(batch[f"set_input_{i}"], rank, tp)
                         with torch.no_grad():
-                            set_embed = model(batch[f"set_input_{i}"])
+                            set_embed = gather_tensors(model(input_ids=set_input))
 
-                        # Compute similarity with softmax
-                        score = torch.mm(dev_embed, set_embed.t())  # (dev_size, subset_size)
+                        # Compute similarity with softmax attention
+                        score = torch.mm(dev_embed, set_embed.t())  # (dev_size, set_size)
                         attn = F.softmax(score.abs(), dim=-1)
                         score = (attn * score).sum(dim=-1, keepdim=True)  # (dev_size, 1)
+                        score = score.float()  # Convert to float32 for numerical stability
                         scores_batch.append(score)
 
                     scores_batch = torch.cat(scores_batch, dim=1)  # (dev_size, topk)
-                    targets = batch['targets'].float()
 
-                    # Compute loss
+                    # Compute loss and backward
                     loss = ranknet_loss(scores_batch, targets, weight_by_diff=True, clip_median=True)
                     self.accelerator.backward(loss)
 
-                    # Re-encode with gradients
-                    dev_embed = model(batch['dev_input'])
+                    # Detach dev_embed before second pass (critical!)
+                    dev_embed = dev_embed.detach()
+
+                    # Second pass: re-encode each subset with gradients
                     for i in range(self.topk + 10):
+                        scores_batch = scores_batch.detach()
                         if f"set_input_{i}" not in batch:
                             break
 
-                        scores_batch = scores_batch.detach()
-                        set_embed = model(batch[f"set_input_{i}"])
+                        set_input = split_data(batch[f"set_input_{i}"], rank, tp)
+                        set_embed = gather_tensors(model(input_ids=set_input))
 
                         score = torch.mm(dev_embed, set_embed.t())
                         attn = F.softmax(score.abs(), dim=-1)
                         score = (attn * score).sum(dim=-1, keepdim=True)
+                        score = score.float()  # Convert to float32 for numerical stability
                         scores_batch[:, i] = score.flatten()
 
                         loss = ranknet_loss(scores_batch, targets, weight_by_diff=True, clip_median=True)
                         self.accelerator.backward(loss)
+
+                    # Compute accuracy
+                    acc = (scores_batch.argmax(dim=-1) == targets.argmax(dim=-1)).float().mean().item()
 
                     self.accelerator.clip_grad_norm_(model.parameters(), 1.0)
                     optimizer.step()
                     optimizer.zero_grad()
                     scheduler.step()
 
-                    losses.append(loss.item())
+                losses.append(loss.item())
+                avg_loss = sum(losses[-100:]) / len(losses[-100:])
+                bar.set_postfix(loss=avg_loss, acc=acc)
 
-                avg_loss = sum(losses) / len(losses)
-                self.accelerator.print(f'Epoch {epoch + 1} avg loss: {avg_loss:.4f}')
+                # Async logging to W&B (rank 0 only)
+                if self.accelerator.is_main_process and self.use_wandb:
+                    scores_cpu = scores_batch.detach().cpu().numpy()
+                    targets_cpu = targets.detach().cpu().numpy()
+                    future = executor.submit(
+                        eval_lds_and_log,
+                        scores_cpu,
+                        None,  # base_scores_cpu
+                        targets_cpu,
+                        run,
+                        loss.item(),
+                        0.0,  # base_loss
+                        avg_loss,
+                        acc
+                    )
 
             # Save checkpoint
             self.accelerator.wait_for_everyone()
@@ -405,3 +558,8 @@ class AirRepTrainer:
             unwrapped_model = self.accelerator.unwrap_model(model)
             unwrapped_model.save_pretrained(self.save_path)
             tokenizer.save_pretrained(self.save_path)
+
+        # Clean up W&B
+        if self.accelerator.is_main_process and self.use_wandb:
+            executor.shutdown(wait=True)
+            run.finish()
