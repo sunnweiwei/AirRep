@@ -124,7 +124,7 @@ python scripts/04_evaluate.py \
 
 ## FastIF (LoGra)
 
-`fast_if` is an efficient reimplementation of [Logix](https://github.com/logix-project/logix). It is 1.5×–2× faster while achieving the same performance:
+`fast_if` is an efficient reimplementation of [Logix](https://github.com/logix-project/logix). It is 1.5×–2× faster than [Logix](https://github.com/logix-project/logix) while achieving the same performance:
 ```python
 from fast_if import LogRA
 
